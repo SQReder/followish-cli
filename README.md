@@ -26,7 +26,7 @@ Only email/password accounts work: social-login accounts need a password set on 
 followish auth      login | logout | whoami
 followish wishlists list | get KEY | create --name ... | update KEY ... | delete KEY
 followish presents  get ID | add KEY --name ... | update ID ... | delete ID
-                    done ID [--undo] | move ID --to KEY | friends | unreserve ID
+                    done ID [--undo] | fulfilled | move ID --to KEY | friends | unreserve ID
 followish friends   list | add USER_LINK | remove FRIEND_ID
 followish profile   get USER_LINK | wishlists USER_LINK
 followish api       METHOD PATH [--json BODY]      # any other endpoint
