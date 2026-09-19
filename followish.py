@@ -500,7 +500,8 @@ def build_parser() -> argparse.ArgumentParser:
     def command(parent, name: str, handler, help_text: str, description: str | None = None, *,
                 view, hints: tuple[str, ...] = ()):
         p = parent.add_parser(name, help=help_text, description=description or help_text, formatter_class=fmt)
-        p.set_defaults(handler=handler, view=view, hints=hints)
+        # Stored as `render`, not `view`: `--view` is a wishlist option and would overwrite it.
+        p.set_defaults(handler=handler, render=view, hints=hints)
         return p
 
     def group(name: str, help_text: str):
@@ -599,7 +600,7 @@ def build_parser() -> argparse.ArgumentParser:
                     "Use it for features without a dedicated command (notifications, settings, friend\n"
                     "request accept/reject). The API is private and undocumented; shapes may change.\n"
                     "Example: followish api POST /notifications/getNotificationsPage")
-    p.set_defaults(handler=cmd_api, view=None)  # always raw: there is no known shape to project
+    p.set_defaults(handler=cmd_api, render=None)  # always raw: there is no known shape to project
     p.add_argument("method", choices=["GET", "POST", "PUT", "PATCH", "DELETE", "get", "post", "put", "patch", "delete"],
                    metavar="METHOD", help="HTTP method: GET, POST, PUT, PATCH or DELETE.")
     p.add_argument("path", help="Path after /api, e.g. /friends.")
@@ -613,8 +614,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = build_parser().parse_args(argv)
         data = args.handler(Client(args.env_file), args)
-        if not args.raw and args.view is not None:
-            data = {"result": compact(args.view(data, args)), "hints": list(args.hints)}
+        if not args.raw and args.render is not None:
+            data = {"result": compact(args.render(data, args)), "hints": list(args.hints)}
         emit(data, args.pretty)
         return 0
     except CliError as err:
