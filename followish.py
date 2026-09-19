@@ -13,6 +13,7 @@ import os
 import pathlib
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -394,6 +395,45 @@ HINTS_PRESENT_ID = (
 
 # ---------------------------------------------------------------- argument parsing
 
+def id_from_url(value: str, markers: tuple[str, ...], what: str) -> str:
+    """Accept a bare identifier or a followish.io URL; take the path segment right after one of `markers`."""
+    value = value.strip()
+    if "/" not in value:
+        return value
+    url = urllib.parse.urlsplit(value if "://" in value else "https://" + value)
+    host = (url.hostname or "").removeprefix("www.")
+    if host != "followish.io":
+        raise argparse.ArgumentTypeError(f"not a followish.io URL: {value!r}")
+    segments = [s for s in url.path.split("/") if s]
+    for marker, following in zip(segments, segments[1:]):
+        if marker in markers:
+            return following
+    raise argparse.ArgumentTypeError(
+        f"no {what} in {value!r}; expected a URL containing /{'/ or /'.join(markers)}/<{what}>")
+
+
+HELP_KEY = "wishlist key or URL, e.g. niepglsrgxbuhn or https://followish.io/mywishlist/niepglsrgxbuhn."
+HELP_ID = "present id or its followish.io URL (.../presents/ID/...)."
+HELP_USER_LINK = "user profile link or URL, e.g. dql4hgh6ccuzkw or https://followish.io/app/users/dql4hgh6ccuzkw."
+
+
+def wishlist_key(value: str) -> str:
+    # Share links are /mywishlist/KEY; the owner's app pages are /app/wishlists/KEY/...
+    return id_from_url(value, ("mywishlist", "wishlists"), "wishlist key")
+
+
+def user_link(value: str) -> str:
+    return id_from_url(value, ("users",), "user link")
+
+
+def present_id(value: str) -> str:
+    # Edit pages look like /app/wishlists/KEY/presents/ID/edit.
+    found = id_from_url(value, ("presents",), "present id")
+    if not found.isdigit():
+        raise argparse.ArgumentTypeError(f"present id must be a number, got {found!r}")
+    return found
+
+
 class JsonErrorParser(argparse.ArgumentParser):
     """Report usage errors as JSON so agents can parse them like any other failure."""
 
@@ -445,9 +485,10 @@ def build_parser() -> argparse.ArgumentParser:
             "Auth: FOLLOWISH_EMAIL and FOLLOWISH_PASSWORD from the environment or ./.env\n"
             "(environment wins). Login is automatic; the access token is cached in\n"
             "~/.cache/followish (override with FOLLOWISH_CACHE_DIR) and renewed on HTTP 401.\n\n"
-            "Identifiers: a wishlist is addressed by its link key (the part after /mywishlist/\n"
-            "in its URL, returned by 'wishlists list'); a present by its numeric id; a user by\n"
-            "their profile link (the part after /app/users/).\n\n"
+            "Identifiers: a wishlist is addressed by its key (returned by 'wishlists list'), a present\n"
+            "by its numeric id, a user by their profile link. Each also accepts a followish.io URL:\n"
+            "https://followish.io/mywishlist/KEY, https://followish.io/app/users/USER_LINK,\n"
+            ".../presents/ID/... The identifier is cut out of the URL before the request.\n\n"
             "Start with: followish wishlists list"),
     )
     root.add_argument("--env-file", metavar="PATH", help="Read credentials from this .env file instead of ./.env.")
@@ -479,7 +520,7 @@ def build_parser() -> argparse.ArgumentParser:
             view=lambda d, a: [wishlist_brief(w) for w in d], hints=HINTS_WISHLIST_KEY)
     p = command(wl, "get", cmd_wishlists_get, "Show one wishlist: settings and a short list of its presents.",
                 view=lambda d, a: wishlist_full(d), hints=HINTS_PRESENT_ID[:2] + HINTS_WISHLIST_KEY[1:])
-    p.add_argument("key", help="Wishlist link key.")
+    p.add_argument("key", type=wishlist_key, help=HELP_KEY)
     p = command(wl, "create", cmd_wishlists_create, "Create a wishlist.",
                 "Create a wishlist. Only --name is required; the rest default to a public list.\n"
                 "Example: followish wishlists create --name 'Birthday' --date-end 2026-12-01",
@@ -489,39 +530,39 @@ def build_parser() -> argparse.ArgumentParser:
                 "Change only the passed settings; the rest are read from the server and kept.\n"
                 "Example: followish wishlists update abc123 --view friends",
                 view=ok(key="key"), hints=HINTS_WISHLIST_KEY[:1])
-    p.add_argument("key", help="Wishlist link key.")
+    p.add_argument("key", type=wishlist_key, help=HELP_KEY)
     add_wishlist_options(p, name_required=False)
     p = command(wl, "delete", cmd_wishlists_delete, "Delete a wishlist and its presents. Irreversible.",
                 view=ok(key="key"), hints=("followish wishlists list — remaining wishlists",))
-    p.add_argument("key", help="Wishlist link key.")
+    p.add_argument("key", type=wishlist_key, help=HELP_KEY)
 
     pr = group("presents", "Gifts inside wishlists: add, edit, mark fulfilled, move, delete.")
     p = command(pr, "get", cmd_presents_get, "Show one present in full.",
                 view=lambda d, a: present_full(d), hints=HINTS_PRESENT_ID[1:])
-    p.add_argument("id", help="Present id.")
+    p.add_argument("id", type=present_id, help=HELP_ID)
     p = command(pr, "add", cmd_presents_add, "Add a present to a wishlist.",
                 "Add a present to a wishlist. Only --name is required.\n"
                 "Example: followish presents add abc123 --name 'Kindle' --price 12990 --link https://...",
                 view=lambda d, a: {"ok": True, "id": d.get("id") if isinstance(d, dict) else None, "wishlist": a.key},
                 hints=HINTS_PRESENT_ID)
-    p.add_argument("key", help="Wishlist link key to add the present to.")
+    p.add_argument("key", type=wishlist_key, help="Wishlist to add the present to: " + HELP_KEY)
     add_present_options(p, name_required=True)
     p = command(pr, "update", cmd_presents_update, "Edit a present.",
                 "Change only the passed fields; the rest are read from the server and kept.",
                 view=ok(id="id"), hints=HINTS_PRESENT_ID[:1])
-    p.add_argument("id", help="Present id.")
+    p.add_argument("id", type=present_id, help=HELP_ID)
     add_present_options(p, name_required=False)
     p = command(pr, "delete", cmd_presents_delete, "Delete a present. Irreversible.", view=ok(id="id"),
                 hints=("followish wishlists get KEY — remaining presents",))
-    p.add_argument("id", help="Present id.")
+    p.add_argument("id", type=present_id, help=HELP_ID)
     p = command(pr, "done", cmd_presents_done, "Mark a present as a fulfilled wish (or undo with --undo).",
                 view=lambda d, a: {"ok": True, "id": a.id, "done": not a.undo}, hints=HINTS_PRESENT_ID[:1])
-    p.add_argument("id", help="Present id.")
+    p.add_argument("id", type=present_id, help=HELP_ID)
     p.add_argument("--undo", action="store_true", help="Mark as not fulfilled again.")
     p = command(pr, "move", cmd_presents_move, "Move a present to another of your wishlists.",
                 view=ok(id="id", wishlist="to"), hints=("followish wishlists get KEY — presents of the target wishlist",))
-    p.add_argument("id", help="Present id.")
-    p.add_argument("--to", required=True, metavar="KEY", help="Target wishlist link key.")
+    p.add_argument("id", type=present_id, help=HELP_ID)
+    p.add_argument("--to", required=True, metavar="KEY", type=wishlist_key, help="Target wishlist: " + HELP_KEY)
     command(pr, "friends", cmd_presents_friends, "List presents you reserved for friends.",
             view=lambda d, a: reserved_view(d),
             hints=("followish presents unreserve ID — cancel your reservation", HELP_PRESENTS))
@@ -529,7 +570,7 @@ def build_parser() -> argparse.ArgumentParser:
                 "Cancel your reservation of a friend's present. Reserving is not supported:\n"
                 "the site signs reservations with an anti-bot token, do it in the browser.",
                 view=ok(id="id"), hints=("followish presents friends — remaining reservations",))
-    p.add_argument("id", help="Present id.")
+    p.add_argument("id", type=present_id, help=HELP_ID)
 
     fr = group("friends", "Friend list management.")
     command(fr, "list", cmd_friends_list, "List friends and pending friend requests.", view=lambda d, a: friends_view(d),
@@ -537,7 +578,7 @@ def build_parser() -> argparse.ArgumentParser:
                    "followish friends remove ID — remove a friend (id from this list)", HELP_FRIENDS))
     p = command(fr, "add", cmd_friends_add, "Send a friend request.", view=ok(userLink="user_link"),
                 hints=("followish friends list — pending requests",))
-    p.add_argument("user_link", help="Profile link of the user.")
+    p.add_argument("user_link", type=user_link, help=HELP_USER_LINK)
     p = command(fr, "remove", cmd_friends_remove, "Remove a friend.", view=ok(id="friend_id"),
                 hints=("followish friends list — remaining friends",))
     p.add_argument("friend_id", help="Friend's user id (from 'friends list').")
@@ -547,11 +588,11 @@ def build_parser() -> argparse.ArgumentParser:
                      "followish friends add USER_LINK — send a friend request")
     p = command(pf, "get", cmd_profile_get, "Show a user's profile.", view=lambda d, a: profile_view(d),
                 hints=hints_profile)
-    p.add_argument("user_link", help="Profile link of the user.")
+    p.add_argument("user_link", type=user_link, help=HELP_USER_LINK)
     p = command(pf, "wishlists", cmd_profile_wishlists, "List wishlists visible to you on a user's profile.",
                 view=lambda d, a: [wishlist_brief(w) for w in d],
                 hints=("followish wishlists get KEY — presents of that wishlist (works for others' lists too)",))
-    p.add_argument("user_link", help="Profile link of the user.")
+    p.add_argument("user_link", type=user_link, help=HELP_USER_LINK)
 
     p = groups.add_parser(
         "api", formatter_class=fmt, help="Call any Followish API endpoint directly (escape hatch).",

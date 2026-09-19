@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - JSON-first CLI for followish.io: auth, wishlists, presents, friends, profile commands and a raw `api` escape hatch.
 - Email/password login from environment variables or `.env`, with a cached per-account access token.
+- Wishlist keys, present ids and user links also accept followish.io URLs.
 
 ### Changed
 
