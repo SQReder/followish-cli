@@ -34,6 +34,10 @@ followish api       METHOD PATH [--json BODY]      # any other endpoint
 
 `followish <group> <command> --help` explains arguments and defaults.
 
+`KEY`, `ID` and `USER_LINK` also accept followish.io URLs, e.g. `followish wishlists get https://followish.io/mywishlist/niepglsrgxbuhn`.
+
+Checks: `python test_followish.py` (or `python -m pytest`).
+
 ## Output contract
 
 - Success: `{"result": ..., "hints": [...]}` on stdout, exit code 0.
