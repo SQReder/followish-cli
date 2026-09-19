@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Wishlist keys, present ids and user links also accept followish.io URLs.
 - `presents fulfilled` lists the hidden fulfilled section where `presents done` moves presents; `profile get` shows
   its key as `fulfilledKey` when visible.
+- `AGENTS.md` for contributors and an installable `skills/followish` skill for agents using the CLI.
 - `e2e.py`: self-cleaning end-to-end check against the live account, with human-like pauses between calls.
 
 ### Changed

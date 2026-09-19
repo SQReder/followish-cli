@@ -36,7 +36,16 @@ followish api       METHOD PATH [--json BODY]      # any other endpoint
 
 `KEY`, `ID` and `USER_LINK` also accept followish.io URLs, e.g. `followish wishlists get https://followish.io/mywishlist/niepglsrgxbuhn`.
 
-Checks: `python test_followish.py` (or `python -m pytest`).
+## For agents
+
+- Using the CLI: install the skill from [`skills/followish/SKILL.md`](skills/followish/SKILL.md) by copying the
+  `skills/followish` directory into your agent's skills directory, e.g. for Claude Code:
+  `cp -r skills/followish ~/.claude/skills/` (or `~/.claude/skills/` → `.claude/skills/` for one project).
+- Changing this repository: read [`AGENTS.md`](AGENTS.md).
+
+## Checks
+
+`python test_followish.py` (or `python -m pytest`).
 
 End-to-end check against the live account: `python e2e.py`. It creates two private (`justMe`) wishlists named
 `followish-cli e2e ...`, runs create/get/add/update/move/done/undo/delete and error cases through the CLI, and deletes
