@@ -101,6 +101,9 @@ def scenario(created: list[str]) -> None:
 
     ok("presents", "done", pid)
     check("done marks fulfilled", ok("presents", "get", pid).get("done") is True)
+    # Depending on the account setting the present stays in place or moves to the fulfilled section.
+    fulfilled = [p["id"] for p in ok("presents", "fulfilled").get("presents", [])]
+    check("fulfilled present is findable", int(pid) in present_ids(b) or int(pid) in fulfilled)
     ok("presents", "done", pid, "--undo")
     check("undo clears fulfilled", ok("presents", "get", pid).get("done") is False)
     check("undo returns present to its wishlist", int(pid) in present_ids(b))

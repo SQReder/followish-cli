@@ -270,6 +270,15 @@ def cmd_presents_move(c: Client, a):
     return c.call("POST", f"/presents/{a.id}/transferPresent", {"wishlistLinkKey": a.to})
 
 
+def cmd_presents_fulfilled(c: Client, a):
+    # Fulfilled presents live in a hidden "executed section" wishlist; only the owner's profile names its key.
+    me = c.call("POST", "/auth/user", {"withoutNewsModals": True})
+    section = c.call("GET", f"/profile/{me['userLink']}").get("executedSection")
+    if not section:  # the account keeps fulfilled presents in place, so there is no section
+        return None
+    return c.call("POST", f"/wishlists/{section['linkKey']}", {"isPublicPage": False})
+
+
 def cmd_presents_add(c: Client, a):
     fields = {"currency": "RUB", "desireLevel": 0, **present_changes(a)}
     return c.call("POST", f"/wishlists/{a.key}/presents", form=present_form(fields))
@@ -372,7 +381,8 @@ def friends_view(data: dict) -> dict:
 
 def profile_view(p: dict) -> dict:
     return {"userLink": p.get("userLink"), "name": p.get("name"), "description": p.get("description"),
-            "birthday": day(p.get("birthday")), "isFriend": (p.get("friendship") or {}).get("isFriend")}
+            "birthday": day(p.get("birthday")), "isFriend": (p.get("friendship") or {}).get("isFriend"),
+            "fulfilledKey": (p.get("executedSection") or {}).get("linkKey")}
 
 
 def ok(**fields: object):
@@ -559,9 +569,19 @@ def build_parser() -> argparse.ArgumentParser:
                 hints=("followish wishlists get KEY — remaining presents",))
     p.add_argument("id", type=present_id, help=HELP_ID)
     p = command(pr, "done", cmd_presents_done, "Mark a present as a fulfilled wish (or undo with --undo).",
-                view=lambda d, a: {"ok": True, "id": a.id, "done": not a.undo}, hints=HINTS_PRESENT_ID[:1])
+                "Mark a present as a fulfilled wish (or undo with --undo). Depending on the account setting,\n"
+                "a fulfilled present stays in its wishlist or moves to the fulfilled section; see\n"
+                "'presents fulfilled'. --undo returns it to the wishlist it came from.",
+                view=lambda d, a: {"ok": True, "id": a.id, "done": not a.undo},
+                hints=(HINTS_PRESENT_ID[0], "followish presents fulfilled — fulfilled presents, if they were moved"))
     p.add_argument("id", type=present_id, help=HELP_ID)
     p.add_argument("--undo", action="store_true", help="Mark as not fulfilled again.")
+    command(pr, "fulfilled", cmd_presents_fulfilled, "List your fulfilled presents (the fulfilled section).",
+            "List presents moved to your fulfilled section by 'presents done'. The section is a hidden\n"
+            "wishlist absent from 'wishlists list'; its key is shown as `key`. Empty when the account\n"
+            "keeps fulfilled presents in their wishlists.",
+            view=lambda d, a: wishlist_full(d) if d else {"presents": []},
+            hints=("followish presents done ID --undo — return a present to its wishlist", HINTS_PRESENT_ID[0]))
     p = command(pr, "move", cmd_presents_move, "Move a present to another of your wishlists.",
                 view=ok(id="id", wishlist="to"), hints=("followish wishlists get KEY — presents of the target wishlist",))
     p.add_argument("id", type=present_id, help=HELP_ID)
