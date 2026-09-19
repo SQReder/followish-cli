@@ -10,6 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - JSON-first CLI for followish.io: auth, wishlists, presents, friends, profile commands and a raw `api` escape hatch.
 - Email/password login from environment variables or `.env`, with a cached per-account access token.
 
+### Changed
+
+- Output is now `{"result", "hints"}`: `result` keeps only the relevant fields under CLI-style names and drops
+  empty ones; `hints` suggests next commands. Use the global `--raw` flag for the unmodified API response.
+
 ### Fixed
 
 - Every authenticated command returned HTTP 401: the API expects a bearer token, not the session cookie.

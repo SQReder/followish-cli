@@ -299,6 +299,99 @@ def cmd_api(c: Client, a):
     return c.call(a.method.upper(), path, body)
 
 
+# ---------------------------------------------------------------- output views
+# Default output keeps only what an agent needs; names match the CLI arguments. --raw bypasses all of this.
+
+def day(value: object) -> str | None:
+    # The API sends "2026-10-05 00:00:00" or "2000-05-10T00:00:00.000000Z" (midnight UTC), so the date prefix is exact.
+    return str(value)[:10] if value else None
+
+
+def compact(value: object) -> object:
+    """Drop null and empty-string fields recursively; an absent field means "not set"."""
+    if isinstance(value, dict):
+        return {k: compact(v) for k, v in value.items() if v is not None and v != ""}
+    if isinstance(value, list):
+        return [compact(v) for v in value]
+    return value
+
+
+def wishlist_brief(w: dict) -> dict:
+    return {"key": w.get("linkKey"), "name": w.get("name"), "presentsCount": w.get("presentsCount"),
+            "dateEnd": day(w.get("dateEnd"))}
+
+
+def present_brief(p: dict) -> dict:
+    return {"id": p.get("id"), "name": p.get("name"), "price": p.get("price"), "currency": p.get("currency"),
+            "reserved": p.get("isReserved"), "done": p.get("isWishExecuted")}
+
+
+def present_full(p: dict) -> dict:
+    return {**present_brief(p), "description": p.get("description"), "link": p.get("storeLink"),
+            "image": p.get("image"), "desire": p.get("desireLevel")}
+
+
+def wishlist_full(w: dict) -> dict:
+    return {"key": w.get("linkKey"), "name": w.get("name"), "dateEnd": day(w.get("dateEnd")),
+            "comment": w.get("comment"), "view": w.get("viewPrivacyStatus"), "reserve": w.get("reservePrivacyStatus"),
+            "names": w.get("nameVisibleStatus"), "presents": [present_brief(p) for p in w.get("presents") or []]}
+
+
+def user_view(u: dict) -> dict:
+    u = u.get("user", u)  # auth login wraps the user, auth whoami does not
+    return {"id": u.get("id"), "name": u.get("name"), "email": u.get("email"), "userLink": u.get("userLink"),
+            "isPremium": u.get("isPremium")}
+
+
+def reserved_view(presents: list) -> list:
+    views = []
+    for p in presents:
+        wishlist = p.get("wishlist") or {}
+        owner = wishlist.get("user") or {}
+        views.append({"id": p.get("id"), "name": p.get("name"), "price": p.get("price"), "currency": p.get("currency"),
+                      "link": p.get("storeLink"), "owner": owner.get("name"),
+                      "wishlist": {"key": wishlist.get("linkKey"), "name": wishlist.get("name")}})
+    return views
+
+
+def friends_view(data: dict) -> dict:
+    def request(r: dict, side: str) -> dict:
+        # Friend requests carry the other user as `toUser`/`fromUser` with id and name only, no profile link.
+        other = r.get(side) or {}
+        return {"userId": other.get("id"), "name": other.get("name")}
+
+    return {"friends": [{"id": f.get("id"), "userLink": f.get("userLink"), "name": f.get("name"),
+                         "birthday": day(f.get("birthday"))} for f in data.get("friends") or []],
+            "incoming": [request(r, "fromUser") for r in data.get("incomingFriendRequests") or []],
+            "outgoing": [request(r, "toUser") for r in data.get("outgoingFriendRequests") or []]}
+
+
+def profile_view(p: dict) -> dict:
+    return {"userLink": p.get("userLink"), "name": p.get("name"), "description": p.get("description"),
+            "birthday": day(p.get("birthday")), "isFriend": (p.get("friendship") or {}).get("isFriend")}
+
+
+def ok(**fields: object):
+    """View for mutations: confirm and echo the identifiers from the command line."""
+    return lambda data, a: {"ok": True, **{k: getattr(a, attr) for k, attr in fields.items()}}
+
+
+HELP_WISHLISTS = "followish wishlists --help — all wishlist commands"
+HELP_PRESENTS = "followish presents --help — all present commands"
+HELP_FRIENDS = "followish friends --help — all friend commands"
+HINTS_WISHLIST_KEY = (
+    "followish wishlists get KEY — settings and presents of a wishlist",
+    "followish presents add KEY --name ... — add a present",
+    "followish wishlists update KEY ... | delete KEY",
+    HELP_WISHLISTS,
+)
+HINTS_PRESENT_ID = (
+    "followish presents get ID — full present: description, link, image",
+    "followish presents update ID ... | done ID | move ID --to KEY | delete ID",
+    HELP_PRESENTS,
+)
+
+
 # ---------------------------------------------------------------- argument parsing
 
 class JsonErrorParser(argparse.ArgumentParser):
@@ -342,7 +435,11 @@ def build_parser() -> argparse.ArgumentParser:
         prog="followish", formatter_class=fmt,
         description="Followish (followish.io) wishlist service client, designed for AI agents.",
         epilog=(
-            "Output: every command prints the API response as JSON to stdout.\n"
+            "Output: JSON on stdout as {\"result\": ..., \"hints\": [...]}. `result` keeps only the useful\n"
+            "fields, named like the CLI arguments (key, id, userLink, link, view...); empty fields are\n"
+            "omitted. `hints` lists next commands, with KEY/ID/USER_LINK placeholders taken from `result`.\n"
+            "--raw prints the unmodified API response instead (API field names, e.g. linkKey, storeLink);\n"
+            "`api` always prints raw.\n"
             "Errors are JSON too: {\"error\": {\"type\", \"message\", ...}} with a non-zero exit code:\n"
             "  1 API or network error, 2 invalid arguments, 3 missing credentials / login rejected.\n\n"
             "Auth: FOLLOWISH_EMAIL and FOLLOWISH_PASSWORD from the environment or ./.env\n"
@@ -355,11 +452,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     root.add_argument("--env-file", metavar="PATH", help="Read credentials from this .env file instead of ./.env.")
     root.add_argument("--pretty", action="store_true", help="Indent JSON output for humans.")
+    root.add_argument("--raw", action="store_true",
+                      help="Print the unmodified API response instead of {result, hints}. Field names differ.")
     groups = root.add_subparsers(dest="group", required=True, metavar="GROUP")
 
-    def command(parent, name: str, handler, help_text: str, description: str | None = None):
+    def command(parent, name: str, handler, help_text: str, description: str | None = None, *,
+                view, hints: tuple[str, ...] = ()):
         p = parent.add_parser(name, help=help_text, description=description or help_text, formatter_class=fmt)
-        p.set_defaults(handler=handler)
+        # Stored as `render`, not `view`: `--view` is a wishlist option and would overwrite it.
+        p.set_defaults(handler=handler, render=view, hints=hints)
         return p
 
     def group(name: str, help_text: str):
@@ -367,63 +468,89 @@ def build_parser() -> argparse.ArgumentParser:
         return g.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     auth = group("auth", "Session management. Login happens automatically; use these to check or reset it.")
-    command(auth, "login", cmd_login, "Force a fresh login with the configured credentials.")
-    command(auth, "logout", cmd_logout, "End the server session.")
-    command(auth, "whoami", cmd_whoami, "Show the logged-in user (name, email, profile link, settings).")
+    command(auth, "login", cmd_login, "Force a fresh login with the configured credentials.", view=lambda d, a: user_view(d),
+            hints=("followish wishlists list — your wishlists",))
+    command(auth, "logout", cmd_logout, "End the server session.", view=ok())
+    command(auth, "whoami", cmd_whoami, "Show the logged-in user (id, name, email, profile link).",
+            view=lambda d, a: user_view(d), hints=("followish wishlists list — your wishlists",))
 
     wl = group("wishlists", "Your wishlists: list, read, create, edit, delete.")
-    command(wl, "list", cmd_wishlists_list, "List your wishlists with their link keys.")
-    p = command(wl, "get", cmd_wishlists_get, "Show one wishlist with its presents.")
+    command(wl, "list", cmd_wishlists_list, "List your wishlists: key, name, presentsCount, dateEnd.",
+            view=lambda d, a: [wishlist_brief(w) for w in d], hints=HINTS_WISHLIST_KEY)
+    p = command(wl, "get", cmd_wishlists_get, "Show one wishlist: settings and a short list of its presents.",
+                view=lambda d, a: wishlist_full(d), hints=HINTS_PRESENT_ID[:2] + HINTS_WISHLIST_KEY[1:])
     p.add_argument("key", help="Wishlist link key.")
     p = command(wl, "create", cmd_wishlists_create, "Create a wishlist.",
                 "Create a wishlist. Only --name is required; the rest default to a public list.\n"
-                "Example: followish wishlists create --name 'Birthday' --date-end 2026-12-01")
+                "Example: followish wishlists create --name 'Birthday' --date-end 2026-12-01",
+                view=lambda d, a: {"ok": True, **wishlist_brief(d)}, hints=HINTS_WISHLIST_KEY)
     add_wishlist_options(p, name_required=True)
     p = command(wl, "update", cmd_wishlists_update, "Change wishlist settings.",
                 "Change only the passed settings; the rest are read from the server and kept.\n"
-                "Example: followish wishlists update abc123 --view friends")
+                "Example: followish wishlists update abc123 --view friends",
+                view=ok(key="key"), hints=HINTS_WISHLIST_KEY[:1])
     p.add_argument("key", help="Wishlist link key.")
     add_wishlist_options(p, name_required=False)
-    p = command(wl, "delete", cmd_wishlists_delete, "Delete a wishlist and its presents. Irreversible.")
+    p = command(wl, "delete", cmd_wishlists_delete, "Delete a wishlist and its presents. Irreversible.",
+                view=ok(key="key"), hints=("followish wishlists list — remaining wishlists",))
     p.add_argument("key", help="Wishlist link key.")
 
     pr = group("presents", "Gifts inside wishlists: add, edit, mark fulfilled, move, delete.")
-    p = command(pr, "get", cmd_presents_get, "Show one present.")
+    p = command(pr, "get", cmd_presents_get, "Show one present in full.",
+                view=lambda d, a: present_full(d), hints=HINTS_PRESENT_ID[1:])
     p.add_argument("id", help="Present id.")
     p = command(pr, "add", cmd_presents_add, "Add a present to a wishlist.",
                 "Add a present to a wishlist. Only --name is required.\n"
-                "Example: followish presents add abc123 --name 'Kindle' --price 12990 --link https://...")
+                "Example: followish presents add abc123 --name 'Kindle' --price 12990 --link https://...",
+                view=lambda d, a: {"ok": True, "id": d.get("id") if isinstance(d, dict) else None, "wishlist": a.key},
+                hints=HINTS_PRESENT_ID)
     p.add_argument("key", help="Wishlist link key to add the present to.")
     add_present_options(p, name_required=True)
     p = command(pr, "update", cmd_presents_update, "Edit a present.",
-                "Change only the passed fields; the rest are read from the server and kept.")
+                "Change only the passed fields; the rest are read from the server and kept.",
+                view=ok(id="id"), hints=HINTS_PRESENT_ID[:1])
     p.add_argument("id", help="Present id.")
     add_present_options(p, name_required=False)
-    p = command(pr, "delete", cmd_presents_delete, "Delete a present. Irreversible.")
+    p = command(pr, "delete", cmd_presents_delete, "Delete a present. Irreversible.", view=ok(id="id"),
+                hints=("followish wishlists get KEY — remaining presents",))
     p.add_argument("id", help="Present id.")
-    p = command(pr, "done", cmd_presents_done, "Mark a present as a fulfilled wish (or undo with --undo).")
+    p = command(pr, "done", cmd_presents_done, "Mark a present as a fulfilled wish (or undo with --undo).",
+                view=lambda d, a: {"ok": True, "id": a.id, "done": not a.undo}, hints=HINTS_PRESENT_ID[:1])
     p.add_argument("id", help="Present id.")
     p.add_argument("--undo", action="store_true", help="Mark as not fulfilled again.")
-    p = command(pr, "move", cmd_presents_move, "Move a present to another of your wishlists.")
+    p = command(pr, "move", cmd_presents_move, "Move a present to another of your wishlists.",
+                view=ok(id="id", wishlist="to"), hints=("followish wishlists get KEY — presents of the target wishlist",))
     p.add_argument("id", help="Present id.")
     p.add_argument("--to", required=True, metavar="KEY", help="Target wishlist link key.")
-    command(pr, "friends", cmd_presents_friends, "List presents you reserved for friends.")
+    command(pr, "friends", cmd_presents_friends, "List presents you reserved for friends.",
+            view=lambda d, a: reserved_view(d),
+            hints=("followish presents unreserve ID — cancel your reservation", HELP_PRESENTS))
     p = command(pr, "unreserve", cmd_presents_unreserve, "Cancel your reservation of a friend's present.",
                 "Cancel your reservation of a friend's present. Reserving is not supported:\n"
-                "the site signs reservations with an anti-bot token, do it in the browser.")
+                "the site signs reservations with an anti-bot token, do it in the browser.",
+                view=ok(id="id"), hints=("followish presents friends — remaining reservations",))
     p.add_argument("id", help="Present id.")
 
     fr = group("friends", "Friend list management.")
-    command(fr, "list", cmd_friends_list, "List friends and pending friend requests.")
-    p = command(fr, "add", cmd_friends_add, "Send a friend request.")
+    command(fr, "list", cmd_friends_list, "List friends and pending friend requests.", view=lambda d, a: friends_view(d),
+            hints=("followish profile wishlists USER_LINK — a friend's wishlists",
+                   "followish friends remove ID — remove a friend (id from this list)", HELP_FRIENDS))
+    p = command(fr, "add", cmd_friends_add, "Send a friend request.", view=ok(userLink="user_link"),
+                hints=("followish friends list — pending requests",))
     p.add_argument("user_link", help="Profile link of the user.")
-    p = command(fr, "remove", cmd_friends_remove, "Remove a friend.")
+    p = command(fr, "remove", cmd_friends_remove, "Remove a friend.", view=ok(id="friend_id"),
+                hints=("followish friends list — remaining friends",))
     p.add_argument("friend_id", help="Friend's user id (from 'friends list').")
 
     pf = group("profile", "Other users' public profiles.")
-    p = command(pf, "get", cmd_profile_get, "Show a user's profile.")
+    hints_profile = ("followish profile wishlists USER_LINK — wishlists visible to you",
+                     "followish friends add USER_LINK — send a friend request")
+    p = command(pf, "get", cmd_profile_get, "Show a user's profile.", view=lambda d, a: profile_view(d),
+                hints=hints_profile)
     p.add_argument("user_link", help="Profile link of the user.")
-    p = command(pf, "wishlists", cmd_profile_wishlists, "List wishlists visible to you on a user's profile.")
+    p = command(pf, "wishlists", cmd_profile_wishlists, "List wishlists visible to you on a user's profile.",
+                view=lambda d, a: [wishlist_brief(w) for w in d],
+                hints=("followish wishlists get KEY — presents of that wishlist (works for others' lists too)",))
     p.add_argument("user_link", help="Profile link of the user.")
 
     p = groups.add_parser(
@@ -432,7 +559,7 @@ def build_parser() -> argparse.ArgumentParser:
                     "Use it for features without a dedicated command (notifications, settings, friend\n"
                     "request accept/reject). The API is private and undocumented; shapes may change.\n"
                     "Example: followish api POST /notifications/getNotificationsPage")
-    p.set_defaults(handler=cmd_api)
+    p.set_defaults(handler=cmd_api, render=None)  # always raw: there is no known shape to project
     p.add_argument("method", choices=["GET", "POST", "PUT", "PATCH", "DELETE", "get", "post", "put", "patch", "delete"],
                    metavar="METHOD", help="HTTP method: GET, POST, PUT, PATCH or DELETE.")
     p.add_argument("path", help="Path after /api, e.g. /friends.")
@@ -445,7 +572,10 @@ def main(argv: list[str] | None = None) -> int:
     pretty = "--pretty" in (argv if argv is not None else sys.argv[1:])
     try:
         args = build_parser().parse_args(argv)
-        emit(args.handler(Client(args.env_file), args), args.pretty)
+        data = args.handler(Client(args.env_file), args)
+        if not args.raw and args.render is not None:
+            data = {"result": compact(args.render(data, args)), "hints": list(args.hints)}
+        emit(data, args.pretty)
         return 0
     except CliError as err:
         emit({"error": {"type": err.kind, "message": str(err), **err.extra}}, pretty)
