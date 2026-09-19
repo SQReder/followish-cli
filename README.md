@@ -38,6 +38,11 @@ followish api       METHOD PATH [--json BODY]      # any other endpoint
 
 Checks: `python test_followish.py` (or `python -m pytest`).
 
+End-to-end check against the live account: `python e2e.py`. It creates two private (`justMe`) wishlists named
+`followish-cli e2e ...`, runs create/get/add/update/move/done/undo/delete and error cases through the CLI, and deletes
+everything afterwards (leftovers of a crashed run are swept at the next start). Each call waits a random 3–8 s pause
+to look like a person; tune with `FOLLOWISH_E2E_PAUSE=min-max`. Takes about 3 minutes.
+
 ## Output contract
 
 - Success: `{"result": ..., "hints": [...]}` on stdout, exit code 0.
