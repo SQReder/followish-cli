@@ -235,7 +235,10 @@ def cmd_whoami(c: Client, a): return c.call("POST", "/auth/user", {"withoutNewsM
 
 def cmd_wishlists_list(c: Client, a): return c.call("GET", "/wishlists")
 def cmd_wishlists_get(c: Client, a):  return c.call("POST", f"/wishlists/{a.key}", {"isPublicPage": False})
-def cmd_wishlists_delete(c: Client, a): return c.call("DELETE", f"/wishlists/{a.key}")
+def cmd_wishlists_delete(c: Client, a):
+    # Unlike every other wishlist route, DELETE takes the numeric id, not the link key (the key gives HTTP 405).
+    wishlist = cmd_wishlists_get(c, a)
+    return c.call("DELETE", f"/wishlists/{wishlist['id']}")
 
 
 def cmd_wishlists_create(c: Client, a):
