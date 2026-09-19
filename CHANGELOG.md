@@ -21,3 +21,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Every authenticated command returned HTTP 401: the API expects a bearer token, not the session cookie.
 - `presents update` no longer drops the present image.
 - `auth login` no longer prints the access token.
+- `wishlists delete` failed with HTTP 405: the API deletes wishlists by numeric id, not by key.
+- `wishlists create` / `update` with `--view` crashed after the request succeeded.
