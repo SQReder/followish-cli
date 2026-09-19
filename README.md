@@ -36,7 +36,17 @@ followish api       METHOD PATH [--json BODY]      # any other endpoint
 
 ## Output contract
 
-- Success: the API response JSON on stdout, exit code 0.
+- Success: `{"result": ..., "hints": [...]}` on stdout, exit code 0.
+  - `result` keeps only the fields an agent normally needs, named like the CLI arguments
+    (`key`, `id`, `userLink`, `link`, `view`, `reserved`, `done`...); null and empty fields are omitted.
+  - `hints` lists the next useful commands with `KEY` / `ID` / `USER_LINK` placeholders and the relevant `--help`.
+
+  ```json
+  {"result": [{"key": "fm5uc5oy6menux", "name": "2026", "presentsCount": 11, "dateEnd": "2026-10-05"}],
+   "hints": ["followish wishlists get KEY — settings and presents of a wishlist", "..."]}
+  ```
+- `--raw` (global, before the group: `followish --raw wishlists list`) prints the unmodified API response
+  with API field names (`linkKey`, `storeLink`...). `followish api` always prints raw.
 - Failure: `{"error": {"type": ..., "message": ..., "status"?: ..., "body"?: ...}}` on stdout and exit code
   `1` (API/network), `2` (invalid arguments), `3` (missing credentials or rejected login).
 
