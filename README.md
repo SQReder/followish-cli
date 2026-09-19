@@ -15,8 +15,9 @@ uv tool install .           # or: pipx install .
 ```
 
 Credentials come from environment variables `FOLLOWISH_EMAIL` / `FOLLOWISH_PASSWORD` or from `./.env`
-(environment wins; `--env-file PATH` points elsewhere). Login is automatic; the session cookie is cached
-in `~/.cache/followish` (`FOLLOWISH_CACHE_DIR` overrides) and renewed when the server returns 401.
+(environment wins; `--env-file PATH` points elsewhere). Login is automatic; the bearer access token is cached
+in `~/.cache/followish` (`FOLLOWISH_CACHE_DIR` overrides, file mode 0600) and renewed when the server returns 401.
+The token is never printed; `auth login` returns only the user.
 Only email/password accounts work: social-login accounts need a password set on the site first.
 
 ## Commands

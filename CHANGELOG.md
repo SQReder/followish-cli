@@ -8,4 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - JSON-first CLI for followish.io: auth, wishlists, presents, friends, profile commands and a raw `api` escape hatch.
-- Email/password login from environment variables or `.env`, with a cached per-account session cookie.
+- Email/password login from environment variables or `.env`, with a cached per-account access token.
+
+### Fixed
+
+- Every authenticated command returned HTTP 401: the API expects a bearer token, not the session cookie.
+- `presents update` no longer drops the present image.
+- `auth login` no longer prints the access token.
