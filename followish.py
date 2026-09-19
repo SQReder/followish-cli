@@ -8,7 +8,6 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
-import http.cookiejar
 import json
 import os
 import pathlib
@@ -84,12 +83,19 @@ class Client:
         email = self.creds[0]
         cache_dir = pathlib.Path(os.environ.get("FOLLOWISH_CACHE_DIR", pathlib.Path.home() / ".cache" / "followish"))
         cache_dir.mkdir(parents=True, exist_ok=True)
-        # One cookie file per account, so switching FOLLOWISH_EMAIL never reuses another user's session.
+        # One token file per account, so switching FOLLOWISH_EMAIL never reuses another user's session.
         account = hashlib.sha256(email.lower().encode()).hexdigest()[:16]
-        self.jar = http.cookiejar.MozillaCookieJar(cache_dir / f"session-{account}.txt")
-        if pathlib.Path(self.jar.filename).exists():
-            self.jar.load(ignore_discard=True, ignore_expires=True)
-        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
+        self.token_file = cache_dir / f"token-{account}"
+        self.token = self.token_file.read_text(encoding="utf-8").strip() if self.token_file.is_file() else None
+
+    def _save_token(self, token: str | None) -> None:
+        self.token = token
+        if token is None:
+            self.token_file.unlink(missing_ok=True)
+            return
+        fd = os.open(self.token_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(token)
 
     @property
     def creds(self) -> tuple[str, str]:
@@ -100,6 +106,8 @@ class Client:
     def _send(self, method: str, path: str, body: object = None, form: dict | None = None) -> tuple[int, object]:
         headers = {"Accept": "application/json", "x-platform": "web", "Origin": SITE, "Referer": SITE + "/",
                    "User-Agent": "followish-cli/0.1"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
         data = None
         if form is not None:
             data, headers["Content-Type"] = multipart(form)
@@ -107,13 +115,12 @@ class Client:
             data, headers["Content-Type"] = json.dumps(body).encode(), "application/json"
         request = urllib.request.Request(API_BASE + path, data=data, method=method, headers=headers)
         try:
-            with self.opener.open(request, timeout=30) as response:
+            with urllib.request.urlopen(request, timeout=30) as response:
                 status, raw = response.status, response.read()
         except urllib.error.HTTPError as err:
             status, raw = err.code, err.read()
         except urllib.error.URLError as err:
             raise CliError(EXIT_API, "network_error", str(err.reason)) from err
-        self.jar.save(ignore_discard=True, ignore_expires=True)
         text = raw.decode("utf-8", errors="replace")
         try:
             return status, json.loads(text) if text else None
@@ -122,15 +129,22 @@ class Client:
 
     def login(self) -> object:
         email, password = self.creds
-        self.jar.clear()
+        self._save_token(None)
         status, data = self._send("POST", "/auth/login", {"email": email, "password": password})
-        if status >= 400:
+        if status >= 400 or not isinstance(data, dict) or not data.get("access_token"):
             raise CliError(EXIT_AUTH, "login_failed", "Login rejected; check FOLLOWISH_EMAIL/FOLLOWISH_PASSWORD",
                            status=status, body=data)
+        self._save_token(data["access_token"])
+        # Keep the bearer token out of stdout: agent transcripts and logs would retain it.
+        return {"user": data.get("user")}
+
+    def logout(self) -> object:
+        data = self.call("POST", "/auth/logout")
+        self._save_token(None)
         return data
 
     def call(self, method: str, path: str, body: object = None, form: dict | None = None) -> object:
-        if not len(self.jar):
+        if not self.token:
             self.login()
         status, data = self._send(method, path, body, form)
         if status == 401:  # session expired: log in again once
@@ -215,7 +229,7 @@ def present_form(fields: dict) -> dict:
 # ---------------------------------------------------------------- command handlers
 
 def cmd_login(c: Client, a):  return c.login()
-def cmd_logout(c: Client, a): return c.call("POST", "/auth/logout")
+def cmd_logout(c: Client, a): return c.logout()
 def cmd_whoami(c: Client, a): return c.call("POST", "/auth/user", {"withoutNewsModals": True})
 
 def cmd_wishlists_list(c: Client, a): return c.call("GET", "/wishlists")
@@ -237,6 +251,7 @@ def cmd_wishlists_update(c: Client, a):
         raise CliError(EXIT_USAGE, "usage_error", "Nothing to update: pass at least one option")
     current = pick(cmd_wishlists_get(c, a), WISHLIST_FIELDS, "wishlist")
     current["dateEnd"] = server_date(current.get("dateEnd"))
+    current["comment"] = current.get("comment") or ""
     current.setdefault("allowedFriendIds", [])
     return c.call("PUT", f"/wishlists/{a.key}", {**current, **changes})
 
@@ -260,7 +275,10 @@ def cmd_presents_update(c: Client, a):
     changes = present_changes(a)
     if not changes:
         raise CliError(EXIT_USAGE, "usage_error", "Nothing to update: pass at least one option")
-    current = pick(cmd_presents_get(c, a), PRESENT_FIELDS, "present")
+    fetched = cmd_presents_get(c, a)
+    current = pick(fetched, PRESENT_FIELDS, "present")
+    # The API returns the picture as `image` but accepts it back as `imageLink`; without it the image is dropped.
+    current.setdefault("imageLink", fetched.get("image"))
     return c.call("POST", f"/presents/{a.id}", form=present_form({**current, **changes}))
 
 
@@ -328,7 +346,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Errors are JSON too: {\"error\": {\"type\", \"message\", ...}} with a non-zero exit code:\n"
             "  1 API or network error, 2 invalid arguments, 3 missing credentials / login rejected.\n\n"
             "Auth: FOLLOWISH_EMAIL and FOLLOWISH_PASSWORD from the environment or ./.env\n"
-            "(environment wins). Login is automatic; the session cookie is cached in\n"
+            "(environment wins). Login is automatic; the access token is cached in\n"
             "~/.cache/followish (override with FOLLOWISH_CACHE_DIR) and renewed on HTTP 401.\n\n"
             "Identifiers: a wishlist is addressed by its link key (the part after /mywishlist/\n"
             "in its URL, returned by 'wishlists list'); a present by its numeric id; a user by\n"
