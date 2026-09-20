@@ -109,6 +109,11 @@ End-to-end check against the live account: `python e2e.py`. It creates two priva
 everything afterwards (leftovers of a crashed run are swept at the next start). Each call waits a random 3–8 s pause
 to look like a person; tune with `FOLLOWISH_E2E_PAUSE=min-max`. Takes about 3 minutes.
 
+## 💜 Thanks
+
+To the [Followish](https://followish.io) team for a great wishlist service: it is the reason this tool exists.
+This is an unofficial client and is not affiliated with Followish, so please be gentle with their API.
+
 ## 📄 License
 
 [WTFPL](LICENSE): do what you want with it.
