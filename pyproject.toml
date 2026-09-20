@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Command-line client for followish.io wishlists, designed for AI agents"
 readme = "README.md"
 requires-python = ">=3.10"
+license = {text = "WTFPL"}
 dependencies = []
 
 [project.scripts]
