@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   its key as `fulfilledKey` when visible.
 - `AGENTS.md` for contributors and an installable `skills/followish` skill for agents using the CLI.
 - `e2e.py`: self-cleaning end-to-end check against the live account, with human-like pauses between calls.
+- WTFPL license.
 
 ### Changed
 
